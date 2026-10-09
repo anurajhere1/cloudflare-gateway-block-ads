@@ -11,19 +11,23 @@ MAX_RETRIES=10
 # Define error function
 function error() {
     echo "Error: $1"
-    rm -f oisd_small_domainswild2.txt.*
+    rm -f oisd_small_domainswild2.txt.* 1hosts_raw.txt
     exit 1
 }
 
 # Define silent error function
 function silent_error() {
     echo "Silent error: $1"
-    rm -f oisd_small_domainswild2.txt.*
+    rm -f oisd_small_domainswild2.txt.* 1hosts_raw.txt
     exit 0
 }
 
-# Download the latest domains list
-curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://small.oisd.nl/domainswild2 | grep -vE '^\s*(#|$)' > oisd_small_domainswild2.txt || silent_error "Failed to download the domains list"
+# Download the latest 1Hosts Lite list (adblock format)
+curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://github.com/badmojr/1Hosts/releases/download/latest/1hosts-Lite_adblock.txt -o 1hosts_raw.txt || silent_error "Failed to download the domains list"
+
+# Convert adblock format (||example.com^) to plain domains, remove duplicates
+grep -E '^\|\|[a-zA-Z0-9._-]+\^$' 1hosts_raw.txt | sed -e 's/^||//' -e 's/\^$//' | sort -u > oisd_small_domainswild2.txt
+rm -f 1hosts_raw.txt
 
 # Check if the file has changed
 git diff --exit-code oisd_small_domainswild2.txt > /dev/null && silent_error "The domains list has not changed"
@@ -33,6 +37,7 @@ git diff --exit-code oisd_small_domainswild2.txt > /dev/null && silent_error "Th
 
 # Calculate the number of lines in the file
 total_lines=$(wc -l < oisd_small_domainswild2.txt)
+echo "Total domains: ${total_lines}"
 
 # Ensure the file is not over the maximum allowed lines
 (( total_lines <= MAX_LIST_SIZE * MAX_LISTS )) || error "The domains list has more than $((MAX_LIST_SIZE * MAX_LISTS)) lines"
