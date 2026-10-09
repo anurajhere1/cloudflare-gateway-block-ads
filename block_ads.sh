@@ -26,7 +26,7 @@ function silent_error() {
 curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://github.com/badmojr/1Hosts/releases/download/latest/1hosts-Lite_adblock.txt -o 1hosts_raw.txt || silent_error "Failed to download the domains list"
 
 # Convert adblock format (||example.com^) to plain domains, remove duplicates
-grep -E '^\|\|[a-zA-Z0-9._-]+\^$' 1hosts_raw.txt | sed -e 's/^||//' -e 's/\^$//' | sort -u > oisd_small_domainswild2.txt
+grep -E '^\|\|[a-zA-Z0-9._-]+\^$' 1hosts_raw.txt | sed -e 's/^||//' -e 's/\^$//' | sort -u | head -n 100000 > oisd_small_domainswild2.txt
 rm -f 1hosts_raw.txt
 
 # Check if the file has changed
