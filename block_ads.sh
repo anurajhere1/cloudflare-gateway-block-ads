@@ -11,19 +11,26 @@ MAX_RETRIES=10
 # Define error function
 function error() {
     echo "Error: $1"
-    rm -f oisd_small_domainswild2.txt.*
+    rm -f oisd_small_domainswild2.txt.* 1hosts_raw.txt 1hosts_clean.txt
     exit 1
 }
 
 # Define silent error function
 function silent_error() {
     echo "Silent error: $1"
-    rm -f oisd_small_domainswild2.txt.*
+    rm -f oisd_small_domainswild2.txt.* 1hosts_raw.txt 1hosts_clean.txt
     exit 0
 }
 
-# Download the latest domains list
-curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://small.oisd.nl/domainswild2 | grep -vE '^\s*(#|$)' > oisd_small_domainswild2.txt || silent_error "Failed to download the domains list"
+# Download the latest 1Hosts Lite wildcards list
+curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://github.com/badmojr/1Hosts/releases/download/latest/1hosts-Lite_domains.wildcards -o 1hosts_raw.txt || silent_error "Failed to download the domains list"
+
+# Keep only valid domains, remove leading "*.", lowercase, remove duplicates
+tr 'A-Z' 'a-z' < 1hosts_raw.txt | grep -E '^(\*\.)?[a-z0-9._-]+$' | sed 's/^\*\.//' | sort -u > 1hosts_clean.txt
+
+# Remove subdomains whose parent domain is already in the list (Cloudflare matches subdomains automatically)
+awk 'NR==FNR { d[$0]=1; next } { s=$0; keep=1; while ((i=index(s,".")) > 0) { s=substr(s,i+1); if (s in d) { keep=0; break } } if (keep) print }' 1hosts_clean.txt 1hosts_clean.txt | head -n $((MAX_LIST_SIZE * MAX_LISTS)) > oisd_small_domainswild2.txt
+rm -f 1hosts_raw.txt 1hosts_clean.txt
 
 # Check if the file has changed
 git diff --exit-code oisd_small_domainswild2.txt > /dev/null && silent_error "The domains list has not changed"
@@ -33,6 +40,7 @@ git diff --exit-code oisd_small_domainswild2.txt > /dev/null && silent_error "Th
 
 # Calculate the number of lines in the file
 total_lines=$(wc -l < oisd_small_domainswild2.txt)
+echo "Total domains: ${total_lines}"
 
 # Ensure the file is not over the maximum allowed lines
 (( total_lines <= MAX_LIST_SIZE * MAX_LISTS )) || error "The domains list has more than $((MAX_LIST_SIZE * MAX_LISTS)) lines"
@@ -162,98 +170,4 @@ policy_id=$(echo "${current_policies}" | jq -r --arg PREFIX "${PREFIX}" '.result
 # Initialize an empty array to store conditions
 conditions=()
 
-# Loop through the used_list_ids and build the "conditions" array dynamically
-[[ ${#used_list_ids[@]} -eq 1 ]] && {
-    conditions='
-                "any": {
-                    "in": {
-                        "lhs": {
-                            "splat": "dns.domains"
-                        },
-                        "rhs": "$'"${used_list_ids[0]}"'"
-                    }
-                }'
-} || {
-    for list_id in "${used_list_ids[@]}"; do
-        conditions+=('{
-                "any": {
-                    "in": {
-                        "lhs": {
-                            "splat": "dns.domains"
-                        },
-                        "rhs": "$'"$list_id"'"
-                    }
-                }
-        }')
-    done
-    conditions=$(IFS=','; echo "${conditions[*]}")
-    conditions='"or": ['"$conditions"']'
-}
-
-# Create the JSON data dynamically
-json_data='{
-    "name": "'${PREFIX}'",
-    "conditions": [
-        {
-            "type":"traffic",
-            "expression":{
-                '"$conditions"'
-            }
-        }
-    ],
-    "action":"block",
-    "enabled":true,
-    "description":"",
-    "rule_settings":{
-        "block_page_enabled":false,
-        "block_reason":"",
-        "biso_admin_controls": {
-            "dcp":false,
-            "dcr":false,
-            "dd":false,
-            "dk":false,
-            "dp":false,
-            "du":false
-        },
-        "add_headers":{},
-        "ip_categories":false,
-        "override_host":"",
-        "override_ips":null,
-        "l4override":null,
-        "check_session":null
-    },
-    "filters":["dns"]
-}'
-
-[[ -z "${policy_id}" || "${policy_id}" == "null" ]] &&
-{
-    # Create the policy
-    echo "Creating policy..."
-    curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules" \
-        -H "Authorization: Bearer ${API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        --data "$json_data" > /dev/null || error "Failed to create policy"
-} ||
-{
-    # Update the policy
-    echo "Updating policy ${policy_id}..."
-    curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PUT "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${policy_id}" \
-        -H "Authorization: Bearer ${API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        --data "$json_data" > /dev/null || error "Failed to update policy"
-}
-
-# Delete excess lists in $excess_list_ids
-for list_id in "${excess_list_ids[@]}"; do
-    echo "Deleting list ${list_id}..."
-    curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X DELETE "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}" \
-        -H "Authorization: Bearer ${API_TOKEN}" \
-        -H "Content-Type: application/json" > /dev/null || error "Failed to delete list ${list_id}"
-done
-
-# Add, commit and push the file
-git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-git config --global user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
-git add oisd_small_domainswild2.txt || error "Failed to add the domains list to repo"
-git commit -m "Update domains list" --author=. || error "Failed to commit the domains list to repo"
-git push origin main || error "Failed to push the domains list to repo"
+# Loop through the used_list_ids and build the
