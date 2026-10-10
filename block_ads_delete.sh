@@ -41,3 +41,6 @@ for list_id in $(echo "${current_lists}" | jq -r --arg PREFIX "${PREFIX}" '.resu
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" > /dev/null || error "Failed to delete list ${list_id}"
 done
+
+
+
